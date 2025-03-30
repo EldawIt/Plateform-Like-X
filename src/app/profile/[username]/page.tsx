@@ -7,34 +7,79 @@ import {
 import { notFound } from "next/navigation";
 import ProfilePageClient from "./ProfilePageClient";
 
-export async function generateMetadata({ params }: { params: { username: string } }) {
-  const user = await getProfileByUsername(params.username);
-  if (!user) return;
+// 1. تعريف واضح للأنواع
+type ProfileParams = {
+  username: string;
+};
 
-  return {
-    title: `${user.name ?? user.username}`,
-    description: user.bio || `Check out ${user.username}'s profile.`,
-  };
+type UserData = {
+  id: string;
+  name?: string | null;
+  username: string;
+  bio?: string | null;
+};
+
+// 2. تحسين generateMetadata مع معالجة الأخطاء
+export async function generateMetadata({ params }: { params: ProfileParams }) {
+  try {
+    const user = await getProfileByUsername(params.username);
+    
+    if (!user) {
+      return {
+        title: "Profile Not Found",
+        description: "The requested profile does not exist.",
+      };
+    }
+
+    return {
+      title: `${user.name || user.username}'s Profile`,
+      description: user.bio || `View ${user.username}'s profile on our platform.`,
+      alternates: {
+        canonical: `/profile/${user.username}`,
+      },
+    };
+  } catch (error) {
+    console.error("Error generating metadata:", error);
+    return {
+      title: "Profile",
+      description: "User profile page",
+    };
+  }
 }
 
-async function ProfilePageServer({ params }: { params: { username: string } }) {
-  const user = await getProfileByUsername(params.username);
+// 3. تحسين الصفحة الرئيسية مع معالجة الأخطاء
+export default async function ProfilePage({ params }: { params: ProfileParams }) {
+  try {
+    // 4. جلب البيانات بشكل متوازٍ مع التحقق من وجود المستخدم
+    const user = await getProfileByUsername(params.username);
+    if (!user) {
+      notFound();
+    }
 
-  if (!user) notFound();
+    // 5. جلب البيانات المتوازية مع معالجة الأخطاء
+    const [posts, likedPosts, isCurrentUserFollowing] = await Promise.allSettled([
+      getUserPosts(user.id),
+      getUserLikedPosts(user.id),
+      isFollowing(user.id),
+    ]);
 
-  const [posts, likedPosts, isCurrentUserFollowing] = await Promise.all([
-    getUserPosts(user.id),
-    getUserLikedPosts(user.id),
-    isFollowing(user.id),
-  ]);
+    // 6. معالجة نتائج Promise.allSettled
+    const resolvedPosts = posts.status === "fulfilled" ? posts.value : [];
+    const resolvedLikedPosts = likedPosts.status === "fulfilled" ? likedPosts.value : [];
+    const resolvedIsFollowing = isCurrentUserFollowing.status === "fulfilled" 
+      ? isCurrentUserFollowing.value 
+      : false;
 
-  return (
-    <ProfilePageClient
-      user={user}
-      posts={posts}
-      likedPosts={likedPosts}
-      isFollowing={isCurrentUserFollowing}
-    />
-  );
+    return (
+      <ProfilePageClient
+        user={user}
+        posts={resolvedPosts}
+        likedPosts={resolvedLikedPosts}
+        isFollowing={resolvedIsFollowing}
+      />
+    );
+  } catch (error) {
+    console.error("Error loading profile page:", error);
+    notFound();
+  }
 }
-export default ProfilePageServer;
